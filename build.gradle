@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'application'
 }
 
 group = 'org.blackbox'
@@ -9,12 +10,34 @@ repositories {
     mavenCentral()
 }
 
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+application {
+    mainClass = 'org.blackbox.Main'
+}
+
 dependencies {
+    // Testing
     testImplementation platform('org.junit:junit-bom:6.0.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.17'
+    runtimeOnly 'ch.qos.logback:logback-classic:1.5.18'
+
+    // JSON serialization and configuration
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.19.0'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.19.0'
+
+    // Metrics
+    implementation 'io.micrometer:micrometer-core:1.15.0'
 }
 
-test {
+tasks.named('test') {
     useJUnitPlatform()
 }
