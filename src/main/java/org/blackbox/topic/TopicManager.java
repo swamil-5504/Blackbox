@@ -10,6 +10,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class TopicManager implements AutoCloseable {
 
@@ -22,6 +25,8 @@ public class TopicManager implements AutoCloseable {
     public TopicManager(Path dataDirectory) throws IOException {
         this.dataDirectory = dataDirectory;
         Files.createDirectories(dataDirectory);
+
+        recoverExistingTopics();
     }
 
     // Create a topic with the requested number of partitions.
@@ -46,6 +51,14 @@ public class TopicManager implements AutoCloseable {
         if (topics.containsKey(topicName)) {
             throw new IllegalArgumentException(
                     "Topic already exists: " + topicName
+            );
+        }
+
+        Path topicDirectory = dataDirectory.resolve(topicName);
+
+        if (Files.exists(topicDirectory)) {
+            throw new IllegalArgumentException(
+                    "Topic directory already exists: " + topicName
             );
         }
 
@@ -151,6 +164,101 @@ public class TopicManager implements AutoCloseable {
 
         if (failure != null) {
             throw failure;
+        }
+    }
+
+    private void recoverExistingTopics() throws IOException{
+        try(var topicDirectories = Files.list(dataDirectory)){
+            for(Path topicDirectory : topicDirectories.toList()){
+                if(!Files.isDirectory(topicDirectory)){
+                    continue;
+                }
+
+                String topicName = topicDirectory.getFileName().toString();
+
+                recoverTopic(topicName,topicDirectory);
+            }
+        }
+    }
+
+    private void recoverTopic(
+            String topicName,
+            Path topicDirectory
+    ) throws IOException {
+
+        Pattern pattern =
+                Pattern.compile("partition-(\\d+)\\.log");
+
+        Map<Integer, Path> partitionFiles = new TreeMap<>();
+
+        try (var files = Files.list(topicDirectory)) {
+
+            for (Path file : files.toList()) {
+
+                if (!Files.isRegularFile(file)) {
+                    continue;
+                }
+
+                String fileName = file.getFileName().toString();
+
+                Matcher matcher = pattern.matcher(fileName);
+
+                if (matcher.matches()) {
+
+                    int partitionNumber =
+                            Integer.parseInt(matcher.group(1));
+
+                    partitionFiles.put(partitionNumber, file);
+                }
+            }
+        }
+
+        if (partitionFiles.isEmpty()) {
+            throw new IOException(
+                    "No partition logs found for topic: " + topicName
+            );
+        }
+
+        List<PartitionLog> partitions = new ArrayList<>();
+
+        try {
+
+            int expectedPartition = 0;
+
+            for (Map.Entry<Integer, Path> entry :
+                    partitionFiles.entrySet()) {
+
+                if (entry.getKey() != expectedPartition) {
+                    throw new IOException(
+                            "Missing partition " + expectedPartition
+                                    + " in topic: " + topicName
+                    );
+                }
+
+                partitions.add(new PartitionLog(entry.getValue()));
+
+                expectedPartition++;
+            }
+
+            topics.put(topicName, partitions);
+
+            System.out.println(
+                    "Recovered topic: " + topicName
+                            + " with " + partitions.size()
+                            + " partition(s)"
+            );
+
+        } catch (IOException | RuntimeException e) {
+
+            for (PartitionLog partition : partitions) {
+                try {
+                    partition.close();
+                } catch (IOException closeError) {
+                    e.addSuppressed(closeError);
+                }
+            }
+
+            throw e;
         }
     }
 }

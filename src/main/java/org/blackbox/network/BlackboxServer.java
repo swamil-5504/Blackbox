@@ -1,4 +1,5 @@
 package org.blackbox.network;
+import org.blackbox.topic.TopicManager;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,15 +24,18 @@ public class BlackboxServer {
     private final Producer producer;
     private final Consumer consumer;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final TopicManager topicManager;
 
     public BlackboxServer(
             int port,
             Producer producer,
-            Consumer consumer
+            Consumer consumer,
+            TopicManager topicManager
     ) {
         this.port = port;
         this.producer = producer;
         this.consumer = consumer;
+        this.topicManager = topicManager;
     }
 
     public void start() throws IOException {
@@ -141,15 +145,16 @@ public class BlackboxServer {
                     key = request.get("key").asText();
                 }
 
-                long offset = producer.send(
+                Producer.SendResult result = producer.sendWithResult(
                         topic,
-                        Message.create(key, value)
+                        Message.create(key,value)
                 );
 
                 Map<String, Object> response = new HashMap<>();
 
                 response.put("status", "OK");
-                response.put("offset", offset);
+                response.put("partition",result.partition());
+                response.put("offset", result.offset());
 
                 return response;
             }
@@ -172,6 +177,75 @@ public class BlackboxServer {
 
                 response.put("status", "OK");
                 response.put("messages", messages);
+
+                return response;
+            }
+
+            case "FETCH_GROUP": {
+
+                String groupId = requiredText(request, "groupId");
+                String topic = requiredText(request, "topic");
+
+                int partition = requiredInt(request, "partition");
+                int limit = requiredInt(request, "limit");
+
+                List<Message> messages = consumer.pollGroup(
+                        groupId,
+                        topic,
+                        partition,
+                        limit
+                );
+
+                Map<String, Object> response = new HashMap<>();
+
+                response.put("status", "OK");
+                response.put("groupId", groupId);
+                response.put("messages", messages);
+
+                return response;
+            }
+
+            case "COMMIT_OFFSET": {
+
+                String groupId = requiredText(request, "groupId");
+                String topic = requiredText(request, "topic");
+
+                int partition = requiredInt(request, "partition");
+                long offset = requiredLong(request, "offset");
+
+                consumer.commitGroupOffset(
+                        groupId,
+                        topic,
+                        partition,
+                        offset
+                );
+
+                Map<String, Object> response = new HashMap<>();
+
+                response.put("status", "OK");
+                response.put("message", "Offset committed successfully");
+                response.put("groupId", groupId);
+                response.put("topic", topic);
+                response.put("partition", partition);
+                response.put("offset", offset);
+
+                return response;
+            }
+
+            case "CREATE_TOPIC": {
+
+                String topic = requiredText(request, "topic");
+
+                int partitions = requiredInt(request, "partitions");
+
+                topicManager.createTopic(topic, partitions);
+
+                Map<String, Object> response = new HashMap<>();
+
+                response.put("status", "OK");
+                response.put("message", "Topic created successfully");
+                response.put("topic", topic);
+                response.put("partitions", partitions);
 
                 return response;
             }

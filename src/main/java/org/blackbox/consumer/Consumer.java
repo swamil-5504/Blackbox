@@ -1,3 +1,4 @@
+
 package org.blackbox.consumer;
 
 import org.blackbox.message.Message;
@@ -11,11 +12,17 @@ import java.util.List;
 public class Consumer {
 
     private final TopicManager topicManager;
+    private final OffsetManager offsetManager;
 
-    public Consumer(TopicManager topicManager) {
+    public Consumer(
+            TopicManager topicManager,
+            OffsetManager offsetManager
+    ) {
         this.topicManager = topicManager;
+        this.offsetManager = offsetManager;
     }
 
+    // Existing method: manually specify the starting offset
     public List<Message> poll(
             String topicName,
             int partitionNumber,
@@ -54,6 +61,68 @@ public class Consumer {
                 startingOffset + (long) maxMessages
         );
 
-        return new ArrayList<>(allMessages.subList(start, end));
+        return new ArrayList<>(
+                allMessages.subList(start, end)
+        );
+    }
+
+
+    public List<Message> pollGroup(
+            String groupId,
+            String topicName,
+            int partitionNumber,
+            int maxMessages
+    ) throws IOException {
+
+        long committedOffset = offsetManager.getCommittedOffset(
+                groupId,
+                topicName,
+                partitionNumber
+        );
+
+        return poll(
+                topicName,
+                partitionNumber,
+                committedOffset,
+                maxMessages
+        );
+    }
+
+
+    public void commitGroupOffset(
+            String groupId,
+            String topicName,
+            int partitionNumber,
+            long nextOffset
+    ) throws IOException {
+
+        if (nextOffset < 0) {
+            throw new IllegalArgumentException(
+                    "Offset cannot be negative"
+            );
+        }
+
+        PartitionLog partitionLog =
+                topicManager.getPartitionLog(
+                        topicName,
+                        partitionNumber
+                );
+
+        long messageCount = partitionLog.readAll().size();
+
+        if (nextOffset > messageCount) {
+            throw new IllegalArgumentException(
+                    "Cannot commit offset " + nextOffset
+                            + ". Maximum valid offset is "
+                            + messageCount
+            );
+        }
+
+        offsetManager.commitOffset(
+                groupId,
+                topicName,
+                partitionNumber,
+                nextOffset
+        );
     }
 }

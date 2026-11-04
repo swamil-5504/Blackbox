@@ -1,6 +1,8 @@
+
 package org.blackbox;
 
 import org.blackbox.consumer.Consumer;
+import org.blackbox.consumer.OffsetManager;
 import org.blackbox.producer.Producer;
 import org.blackbox.topic.TopicManager;
 import org.blackbox.network.BlackboxServer;
@@ -16,18 +18,21 @@ public class Main {
         try (TopicManager topicManager =
                      new TopicManager(dataDirectory)) {
 
-            // Create the topic and its three partitions.
-            topicManager.createTopic("orders", 3);
+            OffsetManager offsetManager =
+                    new OffsetManager(Path.of("offsets"));
 
-            // Create the Producer and Consumer.
             Producer producer = new Producer(topicManager);
-            Consumer consumer = new Consumer(topicManager);
 
-            // Start the TCP server on port 9092.
+            Consumer consumer = new Consumer(
+                    topicManager,
+                    offsetManager
+            );
+
             BlackboxServer server = new BlackboxServer(
                     9092,
                     producer,
-                    consumer
+                    consumer,
+                    topicManager
             );
 
             server.start();
