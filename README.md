@@ -1,12 +1,12 @@
 # BLACKBOX
 
-### A Lightweight Distributed Messaging Broker Built from Scratch in Java
+### A Kafka-Inspired Messaging Broker Built from Scratch in Java
 
-BLACKBOX is a Java-based message broker inspired by the architecture and core concepts of Apache Kafka. It is designed to explore the engineering principles behind modern messaging systems, including persistent message storage, partitioned logs, producer-consumer communication, and consumer group offset management.
+BLACKBOX is a lightweight messaging broker developed from scratch using Java. Inspired by the core architecture of Apache Kafka, the project explores how modern messaging systems handle persistent storage, partitioned logs, producer-consumer communication, and consumer group coordination.
 
-The project is being developed from scratch using core Java, without relying on messaging frameworks or existing broker implementations.
+Rather than relying on existing messaging frameworks, BLACKBOX implements its core mechanisms using Java, Java NIO, TCP sockets, and Gradle.
 
-The goal is to understand and implement the fundamental building blocks of a reliable, scalable messaging system.
+The objective is to understand the engineering principles behind reliable messaging systems and progressively build a more scalable and distributed event streaming platform.
 
 ---
 
@@ -23,10 +23,10 @@ The goal is to understand and implement the fundamental building blocks of a rel
 - Configurable partition count per topic.
 - Independent log files for each partition.
 - Automatic discovery and recovery of existing topics during startup.
-- Partition filename validation and recovery checks.
+- Partition numbering validation during recovery.
 
 ### 3. Producer
-- Message publishing through a dedicated producer component.
+- Dedicated producer component for publishing messages.
 - Round-robin partition selection.
 - Thread-safe partition selection using `AtomicInteger`.
 - Returns the assigned partition and message offset after publishing.
@@ -36,26 +36,36 @@ The goal is to understand and implement the fundamental building blocks of a rel
 - Configurable fetch limits.
 - Partition-specific message retrieval.
 - Consumer group-aware polling using committed offsets.
+- Explicit offset commits.
 
 ### 5. Consumer Group Offset Management
 - Independent offsets for different consumer groups.
 - Persistent offset storage using JSON.
-- Automatic retrieval of the last committed offset.
+- Automatic retrieval of previously committed offsets.
 - Offset validation before committing.
 - Resume consumption from the previously committed position.
 
-### 6. TCP-Based Client-Server Communication
-- TCP server built using Java sockets.
+### 6. Consumer Group Coordination
+- Consumer group creation and management.
+- Consumer registration and removal.
+- Tracking of active group members.
+- Duplicate consumer registration prevention.
+- Round-robin partition assignment among group members.
+- Topic-specific partition assignment storage.
+- Retrieval of assignments for individual topics.
+
+### 7. TCP-Based Client-Server Communication
+- TCP server implemented using Java sockets.
 - JSON-based request and response protocol.
 - Newline-delimited request processing.
-- Multiple client connections handled using threads.
-- Structured error responses for invalid requests.
+- Multiple client connections handled using separate threads.
+- Structured responses for invalid requests.
 
 ---
 
 ## Architecture
 
-BLACKBOX follows a modular architecture in which each component has a clearly defined responsibility.
+BLACKBOX follows a modular architecture, separating storage, messaging, networking, and consumer coordination responsibilities.
 
 ```text
 BLACKBOX
@@ -76,7 +86,10 @@ BLACKBOX
 │
 ├── consumer/
 │   ├── Consumer.java
-│   └── OffsetManager.java
+│   ├── OffsetManager.java
+│   ├── ConsumerGroup.java
+│   ├── ConsumerGroupManager.java
+│   └── PartitionAssignor.java
 │
 └── network/
     └── BlackboxServer.java
@@ -88,10 +101,13 @@ BLACKBOX
 |---|---|
 | `Message` | Immutable message representation |
 | `PartitionLog` | Binary message storage and offset management |
-| `TopicManager` | Topic creation, partition management and recovery |
+| `TopicManager` | Topic creation, partition management, and recovery |
 | `Producer` | Message publishing and partition selection |
 | `Consumer` | Message fetching and group-aware consumption |
 | `OffsetManager` | Persistent consumer group offset tracking |
+| `ConsumerGroup` | Group membership and topic-specific partition assignments |
+| `ConsumerGroupManager` | Creation and management of consumer groups |
+| `PartitionAssignor` | Round-robin partition distribution |
 | `BlackboxServer` | TCP communication and request routing |
 | `Main` | Application initialization and dependency wiring |
 
@@ -100,35 +116,46 @@ BLACKBOX
 ## System Architecture
 
 ```text
-              Client Applications
-                      |
-                      | TCP / JSON
-                      |
-               BlackboxServer
-                      |
-             -------------------
-             |                 |
-          Producer          Consumer
-             |                 |
-             |            OffsetManager
-             |                 |
-             |                 |
-             ------ TopicManager
-                      |
-                 PartitionLog
-                      |
-              Persistent Storage
+                 Client Applications
+                         |
+                         | TCP / JSON
+                         |
+                   BlackboxServer
+                         |
+                 -------------------
+                 |                 |
+              Producer          Consumer
+                 |                 |
+                 |            OffsetManager
+                 |                 |
+                 |                 |
+                 ------ TopicManager
+                         |
+                    PartitionLog
+                         |
+                  Persistent Storage
+
+
+              Consumer Coordination
+
+                 ConsumerGroupManager
+                         |
+                    ConsumerGroup
+                         |
+                   PartitionAssignor
+                         |
+                 Partition Assignments
 ```
 
 Messages are stored in partition-specific append-only logs, while consumer group progress is maintained separately through persistent offset files.
 
-This separation allows multiple consumer groups to independently consume the same underlying message data.
+Consumer group membership and partition assignment are currently managed through dedicated Java components. Automatic rebalancing and integration with the TCP protocol are future development milestones.
 
 ---
 
 ## How Message Storage Works
 
-Each topic consists of one or more partitions.
+Each topic consists of one or more partitions. Every partition maintains its own independent message log and sequential offset.
 
 For example, a topic named `orders` with three partitions has the following structure:
 
@@ -139,8 +166,6 @@ data/
     ├── partition-1.log
     └── partition-2.log
 ```
-
-Each partition maintains its own sequential offset.
 
 Example:
 
@@ -153,17 +178,102 @@ Example:
 
 Offsets are independent across partitions.
 
-Messages are appended to disk using binary serialization, and the partition log reconstructs its next offset during recovery.
+Messages are appended to disk using binary serialization. When the broker restarts, the partition log reconstructs its next offset from the existing records.
 
 ---
 
-## Consumer Groups and Offset Management
+## Producer and Consumer
 
-BLACKBOX supports basic consumer group offset tracking.
+### Producer
+
+The producer publishes messages to a topic and selects a partition using round-robin distribution.
+
+For a topic with three partitions, successive messages are distributed as follows:
+
+```text
+Message 1 → Partition 0
+Message 2 → Partition 1
+Message 3 → Partition 2
+Message 4 → Partition 0
+Message 5 → Partition 1
+Message 6 → Partition 2
+```
+
+The producer returns the partition number and offset assigned to each message.
+
+### Consumer
+
+The consumer retrieves messages from a specific topic partition using an offset and a maximum fetch limit.
+
+It also supports group-aware polling, which retrieves messages starting from a consumer group's committed offset.
+
+---
+
+## Consumer Groups and Partition Assignment
+
+Consumer groups allow multiple consumers to coordinate the consumption of messages.
+
+Each group has a unique group ID and maintains its own membership.
+
+For example:
+
+```text
+payment-service
+├── consumer-1
+├── consumer-2
+└── consumer-3
+```
+
+Different consumer groups can independently consume the same topic while maintaining separate committed offsets.
+
+### Partition Assignment
+
+BLACKBOX implements a round-robin partition assignment strategy.
+
+Consider a topic with six partitions and a consumer group with three members:
+
+```text
+Topic: orders
+Partitions: 0, 1, 2, 3, 4, 5
+
+consumer-1 → [0, 3]
+consumer-2 → [1, 4]
+consumer-3 → [2, 5]
+```
+
+Partitions are distributed cyclically across available group members.
+
+The `PartitionAssignor` calculates these assignments, while `ConsumerGroup` stores assignments separately for each topic.
+
+### Membership Changes
+
+When a consumer is removed, the assignment algorithm can be executed again to redistribute partitions among the remaining members.
+
+For example:
+
+```text
+Before:
+
+consumer-1 → [0, 3]
+consumer-2 → [1, 4]
+consumer-3 → [2, 5]
+
+
+After removing consumer-2:
+
+consumer-1 → [0, 2, 4]
+consumer-3 → [1, 3, 5]
+```
+
+The assignment recalculation is currently explicit. Automatic membership-change detection and rebalancing are planned.
+
+---
+
+## Consumer Group Offset Management
 
 Each consumer group maintains independent progress for every topic partition.
 
-For example:
+Example directory:
 
 ```text
 offsets/
@@ -195,13 +305,13 @@ For example:
 3. The next fetch starts from offset `4`.
 4. After restarting, the consumer can resume from its saved position.
 
-This provides the foundation for independent consumer progress and basic message processing recovery.
+This provides independent consumer progress and basic message processing recovery.
 
 ---
 
 ## TCP API
 
-BLACKBOX exposes its broker operations through a custom JSON-based TCP protocol on port `9092`.
+BLACKBOX exposes broker operations through a custom JSON-based TCP protocol on port `9092`.
 
 Requests are sent as newline-delimited JSON.
 
@@ -298,7 +408,7 @@ Example response:
 | Jackson | JSON serialization and deserialization |
 | PowerShell | TCP API testing |
 
-The project deliberately uses core Java to implement the broker's internal mechanisms rather than relying on an existing messaging framework.
+The project deliberately uses core Java to implement the broker's internal mechanisms instead of relying on an existing messaging framework.
 
 ---
 
@@ -309,6 +419,7 @@ The project deliberately uses core Java to implement the broker's internal mecha
 - JDK 25
 - Gradle Wrapper (included in the repository)
 - Git
+- IntelliJ IDEA (recommended)
 
 ### Clone the repository
 
@@ -339,7 +450,7 @@ Open the project in IntelliJ IDEA and run:
 org.blackbox.Main
 ```
 
-The server starts on port `9092`.
+The TCP server starts on port `9092` when `Main` is configured with the server startup implementation.
 
 Expected startup output:
 
@@ -376,7 +487,7 @@ Deleting these directories resets local broker data and consumer progress.
 
 | Feature | Status |
 |---|---|
-| Message model | Implemented |
+| Immutable message model | Implemented |
 | Binary append-only partition logs | Implemented |
 | Sequential partition offsets | Implemented |
 | Topic creation | Implemented |
@@ -388,9 +499,13 @@ Deleting these directories resets local broker data and consumer progress.
 | Group-aware message fetching | Implemented |
 | Offset commit validation | Implemented |
 | TCP server and JSON protocol | Implemented |
-| Consumer membership and coordination | Planned |
-| Automatic partition assignment | Planned |
-| Consumer rebalancing | Planned |
+| Consumer group membership | Implemented |
+| Consumer group management | Implemented |
+| Round-robin partition assignment | Implemented |
+| Topic-specific assignment storage | Implemented |
+| Automatic partition rebalancing | Planned |
+| Consumer heartbeats and failure detection | Planned |
+| TCP integration for consumer coordination | Planned |
 | Log segmentation and indexing | Planned |
 | Replication and multi-broker clustering | Planned |
 | Stream processing | Planned |
@@ -399,14 +514,14 @@ Deleting these directories resets local broker data and consumer progress.
 
 ## Roadmap
 
-BLACKBOX is under active development. The next milestones focus on moving from a basic message broker toward a more complete distributed messaging and streaming platform.
+BLACKBOX is under active development. The next milestones focus on evolving the broker into a more complete distributed messaging and event streaming platform.
 
 ### Phase 1 – Consumer Group Coordination
-- Consumer registration and membership.
-- Multiple consumers within a group.
-- Automatic partition assignment.
+- Automatic partition assignment updates.
+- Consumer membership-change detection.
 - Partition rebalancing.
 - Consumer heartbeats and failure detection.
+- Integration of consumer coordination with the broker.
 
 ### Phase 2 – Storage Engine Improvements
 - Indexed partition reads.
@@ -446,7 +561,7 @@ BLACKBOX is under active development. The next milestones focus on moving from a
 
 ## Engineering Goals
 
-BLACKBOX is being developed as a hands-on exploration of:
+BLACKBOX is a hands-on exploration of:
 
 - Message broker architecture.
 - Distributed systems fundamentals.
@@ -456,9 +571,10 @@ BLACKBOX is being developed as a hands-on exploration of:
 - Producer-consumer patterns.
 - Event-driven architecture.
 - Consumer group coordination.
+- Partition assignment strategies.
 - Fault tolerance and message delivery guarantees.
 
-The long-term objective is to build a lightweight, reliable and distributed event streaming system while understanding the engineering trade-offs behind every component.
+The long-term objective is to build a lightweight, reliable, and distributed event streaming system while understanding the engineering trade-offs behind each component.
 
 ---
 
