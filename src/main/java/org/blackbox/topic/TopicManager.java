@@ -18,7 +18,7 @@ public class TopicManager implements AutoCloseable {
 
     private final Path dataDirectory;
 
-    // Stores each topic and its partition logs.
+
     private final Map<String, List<PartitionLog>> topics =
             new HashMap<>();
 
@@ -29,7 +29,7 @@ public class TopicManager implements AutoCloseable {
         recoverExistingTopics();
     }
 
-    // Create a topic with the requested number of partitions.
+
     public synchronized void createTopic(
             String topicName,
             int partitionCount
@@ -98,7 +98,7 @@ public class TopicManager implements AutoCloseable {
         }
     }
 
-    // Find a specific partition of a topic.
+
     public synchronized PartitionLog getPartitionLog(
             String topicName,
             int partitionNumber
@@ -134,7 +134,7 @@ public class TopicManager implements AutoCloseable {
         return partitions.size();
     }
 
-    // Return the names of topics currently managed by this instance.
+
     public synchronized Set<String> listTopics() {
         return Set.copyOf(topics.keySet());
     }

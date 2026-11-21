@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.blackbox.consumer.Consumer;
 import org.blackbox.message.Message;
 import org.blackbox.producer.Producer;
+import org.blackbox.consumer.ConsumerGroupManager;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -25,17 +26,21 @@ public class BlackboxServer {
     private final Consumer consumer;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final TopicManager topicManager;
+    private final ConsumerGroupManager groupManager;
+
 
     public BlackboxServer(
             int port,
             Producer producer,
             Consumer consumer,
-            TopicManager topicManager
+            TopicManager topicManager,
+            ConsumerGroupManager groupManager
     ) {
         this.port = port;
         this.producer = producer;
         this.consumer = consumer;
         this.topicManager = topicManager;
+        this.groupManager = groupManager;
     }
 
     public void start() throws IOException {
@@ -184,10 +189,42 @@ public class BlackboxServer {
             case "FETCH_GROUP": {
 
                 String groupId = requiredText(request, "groupId");
+                String consumerId = requiredText(request, "consumerId");
                 String topic = requiredText(request, "topic");
 
                 int partition = requiredInt(request, "partition");
                 int limit = requiredInt(request, "limit");
+
+
+                var group = groupManager.getGroup(groupId);
+
+
+                if (!group.getMembers().contains(consumerId)) {
+                    throw new IllegalArgumentException(
+                            "Consumer is not a member of this group: " + consumerId
+                    );
+                }
+
+
+                Map<String, List<Integer>> assignments =
+                        group.getAssignment(topic);
+
+                List<Integer> assignedPartitions = assignments.get(consumerId);
+
+                if (assignedPartitions == null) {
+                    throw new IllegalArgumentException(
+                            "Consumer group is not subscribed to topic: " + topic
+                    );
+                }
+
+
+                if (!assignedPartitions.contains(partition)) {
+                    throw new IllegalArgumentException(
+                            "Consumer " + consumerId
+                                    + " is not assigned partition " + partition
+                    );
+                }
+
 
                 List<Message> messages = consumer.pollGroup(
                         groupId,
@@ -200,6 +237,9 @@ public class BlackboxServer {
 
                 response.put("status", "OK");
                 response.put("groupId", groupId);
+                response.put("consumerId", consumerId);
+                response.put("topic", topic);
+                response.put("partition", partition);
                 response.put("messages", messages);
 
                 return response;
@@ -244,6 +284,103 @@ public class BlackboxServer {
 
                 response.put("status", "OK");
                 response.put("message", "Topic created successfully");
+                response.put("topic", topic);
+                response.put("partitions", partitions);
+
+                return response;
+            }
+
+            case "CREATE_GROUP": {
+                String groupId = requiredText(request,"groupId");
+
+                groupManager.createGroup(groupId);
+
+                Map<String,Object> response = new HashMap<>();
+
+                response.put("status","OK");
+                response.put("message", "Consumer group created successfully");
+                response.put("groupId",groupId);
+
+                return response;
+            }
+
+            case "JOIN_GROUP": {
+
+                String groupId = requiredText(request, "groupId");
+                String consumerId = requiredText(request, "consumerId");
+
+                groupManager.registerConsumer(groupId, consumerId);
+
+                Map<String, Object> response = new HashMap<>();
+
+                response.put("status", "OK");
+                response.put("message", "Consumer joined group successfully");
+                response.put("groupId", groupId);
+                response.put("consumerId", consumerId);
+
+                return response;
+            }
+
+            case "LEAVE_GROUP": {
+
+                String groupId = requiredText(request, "groupId");
+                String consumerId = requiredText(request, "consumerId");
+
+                groupManager.removeConsumer(groupId, consumerId);
+
+                Map<String, Object> response = new HashMap<>();
+
+                response.put("status", "OK");
+                response.put("message", "Consumer left group successfully");
+                response.put("groupId", groupId);
+                response.put("consumerId", consumerId);
+
+                return response;
+            }
+
+            case "SUBSCRIBE": {
+
+                String groupId = requiredText(request, "groupId");
+                String topic = requiredText(request, "topic");
+
+                groupManager.subscribeTopic(groupId, topic);
+
+                Map<String, Object> response = new HashMap<>();
+
+                response.put("status", "OK");
+                response.put("message", "Topic subscription successful");
+                response.put("groupId", groupId);
+                response.put("topic", topic);
+                response.put(
+                        "partitions",
+                        topicManager.getPartitionCount(topic)
+                );
+
+                return response;
+            }
+
+            case "GET_ASSIGNMENTS": {
+
+                String groupId = requiredText(request, "groupId");
+                String consumerId = requiredText(request, "consumerId");
+                String topic = requiredText(request, "topic");
+
+                Map<String, List<Integer>> assignments =
+                        groupManager.getGroup(groupId).getAssignment(topic);
+
+                List<Integer> partitions = assignments.get(consumerId);
+
+                if (partitions == null) {
+                    throw new IllegalArgumentException(
+                            "Consumer is not a member of this group: " + consumerId
+                    );
+                }
+
+                Map<String, Object> response = new HashMap<>();
+
+                response.put("status", "OK");
+                response.put("groupId", groupId);
+                response.put("consumerId", consumerId);
                 response.put("topic", topic);
                 response.put("partitions", partitions);
 

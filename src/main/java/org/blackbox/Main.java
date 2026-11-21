@@ -1,7 +1,7 @@
-
 package org.blackbox;
 
 import org.blackbox.consumer.Consumer;
+import org.blackbox.consumer.ConsumerGroupManager;
 import org.blackbox.consumer.OffsetManager;
 import org.blackbox.producer.Producer;
 import org.blackbox.topic.TopicManager;
@@ -15,24 +15,25 @@ public class Main {
 
         Path dataDirectory = Path.of("data");
 
-        try (TopicManager topicManager =
-                     new TopicManager(dataDirectory)) {
+        try (TopicManager topicManager = new TopicManager(dataDirectory)) {
 
             OffsetManager offsetManager =
                     new OffsetManager(Path.of("offsets"));
 
             Producer producer = new Producer(topicManager);
 
-            Consumer consumer = new Consumer(
-                    topicManager,
-                    offsetManager
-            );
+            Consumer consumer =
+                    new Consumer(topicManager, offsetManager);
+
+            ConsumerGroupManager groupManager =
+                    new ConsumerGroupManager(topicManager);
 
             BlackboxServer server = new BlackboxServer(
                     9092,
                     producer,
                     consumer,
-                    topicManager
+                    topicManager,
+                    groupManager
             );
 
             server.start();
