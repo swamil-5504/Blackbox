@@ -662,5 +662,3 @@ BLACKBOX is a hands-on exploration of:
 - Fault tolerance and message delivery guarantees.
 
 The long-term objective is to build a lightweight, reliable, and distributed event streaming system while understanding the engineering trade-offs behind each component.
-
-**BLACKBOX — Building the fundamentals of distributed messaging, one component at a time.**
