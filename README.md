@@ -1,147 +1,122 @@
-# **BLACKBOX**
+# BLACKBOX
 
-### **A Kafka-Inspired Messaging Broker Built from Scratch in Java**
+### A Kafka-inspired messaging broker built from scratch in Java
 
-BLACKBOX is a lightweight messaging broker developed from scratch using Java. Inspired by the core architecture of Apache Kafka, the project explores how modern messaging systems handle persistent storage, partitioned logs, producer-consumer communication, consumer group coordination, and broker-to-broker communication.
+![Java](https://img.shields.io/badge/Java-25-orange?style=flat-square)
+![Build](https://img.shields.io/badge/build-Gradle-02303A?style=flat-square)
+![Transport](https://img.shields.io/badge/transport-TCP%20%2B%20JSON-blue?style=flat-square)
+![Status](https://img.shields.io/badge/status-active%20development-yellow?style=flat-square)
 
-Rather than relying on existing messaging frameworks, BLACKBOX implements its core mechanisms using Java, Java NIO, TCP sockets, and Gradle.
+BLACKBOX is a lightweight messaging broker written in plain Java (Java NIO, TCP sockets, Gradle). It is modeled on the core ideas of Apache Kafka: **append-only partitioned logs**, **offset-based consumption**, **consumer groups with partition assignment**, and **broker-to-broker networking**.
 
-The objective is to understand the engineering principles behind reliable messaging systems and progressively build a more scalable and distributed event streaming platform.
+It deliberately avoids messaging frameworks. The goal is to understand *why* reliable messaging systems are designed the way they are by building each mechanism by hand, then growing the project step by step into a distributed event-streaming platform.
 
-## **Key Features**
+> **Project status:** a fully working single-broker system (storage, topics, producers, consumers, consumer groups, TCP API) plus a multi-broker networking foundation (handshake, persistent connections, PING/PONG). Replication, leader election and failover are **not implemented yet**. See [Current limitations](#current-limitations) and the [Roadmap](#roadmap).
 
-### **1. Persistent Message Storage**
+---
 
-- Append-only binary partition logs.
-- Disk-based message persistence using Java NIO `FileChannel`.
-- Sequential offset assignment within each partition.
-- Automatic offset recovery when reopening existing partition logs.
+## Table of contents
 
-### **2. Topic and Partition Management**
+1. [What you can do with it](#what-you-can-do-with-it)
+2. [Key features](#key-features)
+3. [Architecture](#architecture)
+4. [How it works](#how-it-works)
+   - [Storage and offsets](#storage-and-offsets)
+   - [Producer: partition selection](#producer-partition-selection)
+   - [Consumer groups and rebalancing](#consumer-groups-and-rebalancing)
+   - [Assignment-aware fetching](#assignment-aware-fetching)
+   - [Offset management](#offset-management)
+   - [Multi-broker communication](#multi-broker-communication)
+5. [TCP API reference](#tcp-api-reference)
+6. [Quick start](#quick-start)
+7. [End-to-end walkthrough](#end-to-end-walkthrough)
+8. [Runtime storage layout](#runtime-storage-layout)
+9. [Design decisions](#design-decisions)
+10. [Current limitations](#current-limitations)
+11. [Implementation status and roadmap](#implementation-status-and-roadmap)
+12. [Technology stack](#technology-stack)
 
-- Dynamic topic creation.
-- Configurable partition count per topic.
-- Independent log files for each partition.
-- Automatic discovery and recovery of existing topics during startup.
-- Partition numbering validation during recovery.
+---
 
-### **3. Producer**
+## What you can do with it
 
-- Dedicated producer component for publishing messages.
-- Round-robin partition selection.
-- Thread-safe partition selection using `AtomicInteger`.
-- Returns the assigned partition and message offset after publishing.
+- Create topics with a configurable number of partitions.
+- Publish messages over TCP and get back the `partition` and `offset` assigned to each one.
+- Read messages from any partition at any offset.
+- Create consumer groups, subscribe them to topics, add or remove consumers, and watch partitions get rebalanced automatically.
+- Consume as a group member, with the broker enforcing which partitions you are allowed to read and resuming from your last committed offset.
+- Run several broker processes that discover each other, handshake, and keep persistent connections open.
 
-### **4. Consumer**
+---
 
-- Offset-based message consumption.
-- Configurable fetch limits.
-- Partition-specific message retrieval.
-- Consumer group-aware polling using committed offsets.
-- Explicit offset commits.
+## Key features
 
-### **5. Consumer Group Offset Management**
+| Area | What is implemented |
+|---|---|
+| **Persistent storage** | Append-only binary partition logs via Java NIO `FileChannel`; sequential offsets per partition; offset recovery when a log is reopened |
+| **Topics and partitions** | Dynamic topic creation, configurable partition count, one independent log file per partition, automatic topic discovery and recovery on startup, partition-numbering validation during recovery |
+| **Producer** | Round-robin partition selection, thread-safe via `AtomicInteger`, returns assigned partition and offset |
+| **Consumer** | Offset-based fetch with a configurable limit, partition-specific retrieval, group-aware polling from committed offsets, explicit offset commits |
+| **Offset management** | Independent offsets per consumer group, JSON persistence, validation before commit, resume from last committed position |
+| **Group coordination** | Group creation, consumer join/leave, duplicate registration prevention, round-robin assignment, per-topic assignment storage, automatic rebalancing on membership or subscription changes |
+| **Assignment-aware fetch** | Verifies group membership, topic subscription and partition ownership before serving data |
+| **TCP server** | Java-socket server, newline-delimited JSON protocol, one thread per client connection, structured error responses |
+| **Multi-broker networking** | Shared `cluster.properties`, unique broker IDs, separate client and internal ports, handshake with cluster-name and identity validation, startup retries, persistent peer connections, PING/PONG |
 
-- Independent offsets for different consumer groups.
-- Persistent offset storage using JSON.
-- Automatic retrieval of previously committed offsets.
-- Offset validation before committing.
-- Resume consumption from the previously committed position.
+---
 
-### **6. Consumer Group Coordination**
+## Architecture
 
-- Consumer group creation and management.
-- Consumer registration and removal.
-- Tracking of active group members.
-- Duplicate consumer registration prevention.
-- Round-robin partition assignment among group members.
-- Topic-specific partition assignment storage.
-- Automatic partition rebalancing when consumers join or leave.
-- Rebalancing when group topic subscriptions change.
-- Retrieval of assignments for individual consumers.
-
-### **7. Assignment-Aware Message Fetching**
-
-- Validates consumer group membership before fetching.
-- Verifies that the group is subscribed to the requested topic.
-- Ensures consumers can only fetch partitions assigned to them.
-- Prevents consumers from fetching partitions assigned to other group members.
-
-### **8. TCP-Based Client-Server Communication**
-
-- TCP server implemented using Java sockets.
-- JSON-based request and response protocol.
-- Newline-delimited request processing.
-- Multiple client connections handled using separate threads.
-- Structured responses for invalid requests.
-- TCP integration for producer, consumer, and consumer group operations.
-
-### **9. Multi-Broker Communication**
-
-- Support for running multiple independent broker instances.
-- Shared cluster configuration through `cluster.properties`.
-- Unique broker IDs and separate client-facing and internal ports.
-- Dedicated TCP servers for inter-broker communication.
-- Broker identity and cluster name validation during handshakes.
-- Prevention of self-connections and cross-cluster connections.
-- Automatic connection retries when a peer is unavailable during startup.
-- Persistent TCP connections between broker instances.
-- PING/PONG request-response communication over established connections.
-- Reusable peer connections maintained by the inter-broker client.
-
-## **Architecture**
-
-BLACKBOX follows a modular architecture, separating storage, messaging, networking, consumer coordination, and inter-broker communication responsibilities.
+BLACKBOX separates storage, messaging, networking, consumer coordination and inter-broker communication into distinct packages.
 
 ```text
 BLACKBOX
 │
-├── Main.java
+├── Main.java                      # Startup and dependency wiring
 │
 ├── message/
-│   └── Message.java
+│   └── Message.java               # Immutable message model
 │
 ├── storage/
-│   └── PartitionLog.java
+│   └── PartitionLog.java          # Binary log + offset management
 │
 ├── topic/
-│   └── TopicManager.java
+│   └── TopicManager.java          # Topic creation, partitions, recovery
 │
 ├── producer/
-│   └── Producer.java
+│   └── Producer.java              # Publishing + partition selection
 │
 ├── consumer/
-│   ├── Consumer.java
-│   ├── OffsetManager.java
-│   ├── ConsumerGroup.java
-│   ├── ConsumerGroupManager.java
-│   └── PartitionAssignor.java
+│   ├── Consumer.java              # Fetching + group-aware consumption
+│   ├── OffsetManager.java         # Persistent committed offsets
+│   ├── ConsumerGroup.java         # Membership + per-topic assignments
+│   ├── ConsumerGroupManager.java  # Lifecycle, subscriptions, rebalancing
+│   └── PartitionAssignor.java     # Round-robin distribution
 │
 ├── network/
-│   └── BlackboxServer.java
+│   └── BlackboxServer.java        # Client-facing TCP server + routing
 │
 ├── cluster/
-│   ├── ClusterConfig.java
-│   ├── InterBrokerServer.java
-│   └── InterBrokerClient.java
+│   ├── ClusterConfig.java         # Cluster config loading/validation
+│   ├── InterBrokerServer.java     # Accepts broker-to-broker connections
+│   └── InterBrokerClient.java     # Connects to and maintains peer links
 │
-└── resources/
-    └── config/
-        └── cluster.properties
+└── resources/config/
+    └── cluster.properties
 ```
 
-### **Component Responsibilities**
+### Component responsibilities
 
 | Component | Responsibility |
 |---|---|
 | `Message` | Immutable message representation |
 | `PartitionLog` | Binary message storage and offset management |
-| `TopicManager` | Topic creation, partition management, and recovery |
+| `TopicManager` | Topic creation, partition management, startup recovery |
 | `Producer` | Message publishing and partition selection |
 | `Consumer` | Message fetching and group-aware consumption |
 | `OffsetManager` | Persistent consumer group offset tracking |
 | `ConsumerGroup` | Group membership and topic-specific partition assignments |
-| `ConsumerGroupManager` | Group lifecycle, membership, subscriptions, and rebalancing |
+| `ConsumerGroupManager` | Group lifecycle, membership, subscriptions, rebalancing |
 | `PartitionAssignor` | Round-robin partition distribution |
 | `BlackboxServer` | Client-facing TCP communication and request routing |
 | `ClusterConfig` | Loads and validates broker cluster configuration |
@@ -149,91 +124,59 @@ BLACKBOX
 | `InterBrokerClient` | Establishes and maintains connections to peer brokers |
 | `Main` | Application initialization and dependency wiring |
 
-## **System Architecture**
+### Single-broker request flow
 
-### **Client and Consumer Group Architecture**
+```mermaid
+flowchart TD
+    C[Client application] -->|"TCP / newline-delimited JSON"| S[BlackboxServer]
+    S --> P[Producer]
+    S --> CO[Consumer]
+    S --> GM[ConsumerGroupManager]
 
-```text
-                  Client Applications
-                         |
-                         | TCP / JSON
-                         |
-                    BlackboxServer
-                         |
-               -----------------------
-               |                     |
-            Producer               Consumer
-               |                     |
-               |                OffsetManager
-               |                     |
-               |                     |
-               ------ TopicManager
-                         |
-                     PartitionLog
-                         |
-                   Persistent Storage
+    P --> TM[TopicManager]
+    CO --> TM
+    CO --> OM[OffsetManager]
 
+    TM --> PL[("PartitionLog<br/>partition-N.log")]
+    OM --> OJ[("offsets/&lt;group&gt;.json")]
 
-               Consumer Coordination
-
-                  ConsumerGroupManager
-                         |
-                     ConsumerGroup
-                         |
-                    PartitionAssignor
-                         |
-                  Partition Assignments
+    GM --> CG[ConsumerGroup]
+    GM --> PA[PartitionAssignor]
+    PA --> CG
 ```
 
-Messages are stored in partition-specific append-only logs, while consumer group progress is maintained separately through persistent offset files.
+Messages live in partition-specific append-only logs. Consumer group *progress* is stored separately in offset files. Consumer group *membership and assignments* are managed by dedicated components and are recalculated whenever a consumer joins or leaves, or a group subscribes to a topic.
 
-Consumer group membership and partition assignments are managed through dedicated Java components. When a consumer joins or leaves a group, or when the group subscribes to a topic, BLACKBOX recalculates partition assignments. These operations are exposed through the TCP protocol.
+> **Persistence distinction:** consumer group **offsets are persisted to disk**. Group **membership and partition assignments live in memory** and must be recreated through the TCP API after a broker restart.
 
-**Persistence distinction:** Consumer group offsets are persisted to disk. Consumer group membership and partition assignments currently exist in memory and must be recreated through the TCP API after a broker restart.
+### Multi-broker topology
 
-### **Multi-Broker Architecture**
+Each broker is its own process with its own ports and its own data and offset directories.
 
-BLACKBOX supports multiple broker processes running independently with separate storage directories and network ports.
-
-```text
-                 BLACKBOX CLUSTER
-                 blackbox-local
-
-       +----------------+  +----------------+
-       |    Broker 1    |  |    Broker 2    |
-       |                |  |                |
-       | Client: 9092   |  | Client: 9093   |
-       | Internal:19092 |  | Internal:19093 |
-       +----------------+  +----------------+
-                \                /
-                 \              /
-                  \            /
-                   \          /
-                 +----------------+
-                 |    Broker 3    |
-                 |                |
-                 | Client: 9094   |
-                 | Internal:19094 |
-                 +----------------+
+```mermaid
+flowchart LR
+    subgraph Cluster["Cluster: blackbox-local"]
+        B1["Broker 1<br/>client 9092<br/>internal 19092"]
+        B2["Broker 2<br/>client 9093<br/>internal 19093"]
+        B3["Broker 3<br/>client 9094<br/>internal 19094"]
+    end
+    B1 <--> B2
+    B2 <--> B3
+    B1 <--> B3
+    CL[Clients] --> B1
+    CL --> B2
+    CL --> B3
 ```
 
-Each broker has:
+Brokers talk to each other only over the **internal** port. Clients only use the **client** port.
 
-- A unique broker ID.
-- A client-facing port for producer and consumer requests.
-- An internal port for inter-broker communication.
-- An independent data directory.
-- An independent consumer offset directory.
+---
 
-The internal communication layer uses persistent TCP connections to exchange requests between broker processes.
+## How it works
 
-**Current limitation:** The brokers can establish and maintain inter-broker connections and exchange PING/PONG messages. Topic metadata synchronization, message replication, partition leadership, and failover are not yet implemented.
+### Storage and offsets
 
-## **How Message Storage Works**
-
-Each topic consists of one or more partitions. Every partition maintains its own independent message log and sequential offset.
-
-For example, a topic named `orders` with three partitions has the following structure:
+Every topic has one or more partitions, and **every partition has its own log file and its own offset sequence**.
 
 ```text
 data/
@@ -243,8 +186,6 @@ data/
     └── partition-2.log
 ```
 
-Example:
-
 | Partition | Offset | Message |
 |---|---|---|
 | 0 | 0 | Order created |
@@ -252,17 +193,15 @@ Example:
 | 1 | 0 | Order dispatched |
 | 2 | 0 | Order cancelled |
 
-Offsets are independent across partitions.
+Offsets are only meaningful *within* a partition. Offset `0` exists in every partition.
 
-Messages are appended to disk using binary serialization. When the broker restarts, the partition log reconstructs its next offset from the existing records.
+Messages are appended using binary serialization. On restart, `PartitionLog` rebuilds its next offset by reading the existing records, and `TopicManager` rediscovers topics from the data directory (validating that partition numbering is consistent).
 
-## **Producer and Consumer**
+**Why append-only?** Sequential writes are fast, offsets become trivial (the position in the log), and previously written data is never mutated, which keeps recovery simple.
 
-### **Producer**
+### Producer: partition selection
 
-The producer publishes messages to a topic and selects a partition using round-robin distribution.
-
-For a topic with three partitions, successive messages are distributed as follows:
+The producer picks a partition using round-robin and an `AtomicInteger` counter, so concurrent publishers never race on the selection.
 
 ```text
 Message 1 → Partition 0
@@ -273,21 +212,13 @@ Message 5 → Partition 1
 Message 6 → Partition 2
 ```
 
-The producer returns the partition number and offset assigned to each message.
+The response always tells you where the message landed (`partition` and `offset`).
 
-### **Consumer**
+> Messages carry a `key`, but partitioning is currently round-robin rather than key-hash based. See the [roadmap](#implementation-status-and-roadmap) and [design decisions](#design-decisions).
 
-The consumer retrieves messages from a specific topic partition using an offset and a maximum fetch limit.
+### Consumer groups and partition assignment
 
-It also supports group-aware polling, which retrieves messages starting from a consumer group's committed offset.
-
-## **Consumer Groups and Partition Assignment**
-
-Consumer groups allow multiple consumers to coordinate the consumption of messages.
-
-Each group has a unique group ID and maintains its own membership.
-
-For example:
+A consumer group is a set of consumers that share the work of reading a topic. Each group has a unique ID and its own membership, and different groups can read the same topic independently with separate offsets.
 
 ```text
 payment-service
@@ -296,36 +227,7 @@ payment-service
 └── consumer-3
 ```
 
-Different consumer groups can independently consume the same topic while maintaining separate committed offsets.
-
-### **Partition Assignment**
-
-BLACKBOX implements a round-robin partition assignment strategy.
-
-Consider a topic with six partitions and a consumer group with three members:
-
-```text
-Topic: orders
-Partitions: 0, 1, 2, 3, 4, 5
-
-consumer-1 → [0, 3]
-consumer-2 → [1, 4]
-consumer-3 → [2, 5]
-```
-
-Partitions are distributed cyclically across available group members.
-
-The `PartitionAssignor` calculates these assignments, while `ConsumerGroup` stores assignments separately for each topic.
-
-`ConsumerGroupManager` coordinates membership and triggers rebalancing when members join or leave, or when a topic subscription changes.
-
-### **Automatic Rebalancing**
-
-When a consumer joins or leaves a group, BLACKBOX recalculates partition assignments among the remaining active members.
-
-For example:
-
-**Before:**
+`PartitionAssignor` distributes partitions cyclically. For a topic with six partitions and three consumers:
 
 ```text
 consumer-1 → [0, 3]
@@ -333,33 +235,38 @@ consumer-2 → [1, 4]
 consumer-3 → [2, 5]
 ```
 
-**After removing consumer-2:**
+`ConsumerGroup` stores assignments **per topic**, and `ConsumerGroupManager` coordinates membership and triggers rebalancing.
+
+#### Automatic rebalancing
+
+Rebalancing runs when a consumer joins, a consumer leaves, or the group's topic subscription changes.
 
 ```text
-consumer-1 → [0, 2, 4]
-consumer-3 → [1, 3, 5]
+Before                       After removing consumer-2
+consumer-1 → [0, 3]          consumer-1 → [0, 2, 4]
+consumer-2 → [1, 4]          consumer-3 → [1, 3, 5]
+consumer-3 → [2, 5]
 ```
 
-The updated assignments are available through the TCP API.
+Current assignments can be queried at any time with `GET_ASSIGNMENTS`.
 
-The current implementation does not yet include heartbeats or automatic detection of crashed or disconnected consumers.
+> There are no heartbeats yet. A consumer that crashes without sending `LEAVE_GROUP` stays in the group until it is removed explicitly.
 
-## **Assignment-Aware Message Fetching**
+### Assignment-aware fetching
 
-BLACKBOX validates partition ownership before allowing a consumer to fetch messages through `FETCH_GROUP`.
+`FETCH_GROUP` checks three things before returning data:
 
-For example:
+1. The consumer is a member of the group.
+2. The group is subscribed to the requested topic.
+3. The requested partition is assigned to **this** consumer.
 
 ```text
 Topic: orders
-
 consumer-1 → [0, 2]
 consumer-2 → [1]
 ```
 
-If `consumer-1` attempts to fetch partition `1`, the broker rejects the request.
-
-Example error response:
+If `consumer-1` requests partition `1`, the broker rejects it:
 
 ```json
 {
@@ -368,13 +275,11 @@ Example error response:
 }
 ```
 
-This ensures that consumers within the same group only fetch messages from their assigned partitions.
+This guarantees that within a group, each partition is read by one consumer at a time, which is what makes parallel consumption safe.
 
-## **Consumer Group Offset Management**
+### Offset management
 
-Each consumer group maintains independent progress for every topic partition.
-
-Example directory:
+Each group tracks its own progress per topic partition, stored as one JSON file per group:
 
 ```text
 offsets/
@@ -382,186 +287,27 @@ offsets/
 └── analytics-service.json
 ```
 
-Example offset file:
-
 ```json
 {
-  "orders": {
-    "0": 4,
-    "1": 5,
-    "2": 2
-  },
-  "payments": {
-    "0": 4
-  }
+  "orders":   { "0": 4, "1": 5, "2": 2 },
+  "payments": { "0": 4 }
 }
 ```
 
-Offsets represent the **next message to be consumed**, rather than the last message processed.
-
-For example:
+**An offset is the *next* message to read, not the last one processed.**
 
 1. A consumer reads the message at offset `3`.
-2. After processing it, the consumer commits offset `4`.
-3. The next fetch starts from offset `4`.
-4. After restarting, the consumer can resume from its saved position.
+2. After processing it, it commits `4`.
+3. The next `FETCH_GROUP` starts at offset `4`.
+4. After a restart, the consumer resumes from `4`.
 
-This provides independent consumer progress and basic message processing recovery.
+Commits are validated before they are stored. Because commits are explicit, a consumer that crashes after reading but before committing will re-read those messages on restart (**at-least-once** behavior).
 
-## **TCP API**
+### Multi-broker communication
 
-BLACKBOX exposes broker operations through a custom JSON-based TCP protocol on the client-facing port.
+#### Cluster configuration
 
-Requests are sent as newline-delimited JSON.
-
-### **Supported Commands**
-
-| Command | Description |
-|---|---|
-| `CREATE_TOPIC` | Creates a topic with a specified number of partitions |
-| `PUBLISH` | Publishes a message to a topic |
-| `FETCH` | Fetches messages from a specified partition and offset |
-| `FETCH_GROUP` | Fetches messages using a consumer group's committed offset after validating partition ownership |
-| `COMMIT_OFFSET` | Commits the next offset for a consumer group |
-| `CREATE_GROUP` | Creates a consumer group |
-| `JOIN_GROUP` | Adds a consumer to a group and triggers rebalancing |
-| `LEAVE_GROUP` | Removes a consumer from a group and triggers rebalancing |
-| `SUBSCRIBE` | Subscribes a group to a topic and triggers rebalancing |
-| `GET_ASSIGNMENTS` | Retrieves a consumer's partition assignments for a topic |
-
-### **Example Requests**
-
-**1. Create a topic**
-
-```json
-{
-  "command": "CREATE_TOPIC",
-  "topic": "orders",
-  "partitions": 3
-}
-```
-
-**2. Publish a message**
-
-```json
-{
-  "command": "PUBLISH",
-  "topic": "orders",
-  "key": "user-101",
-  "value": "New order created"
-}
-```
-
-Example response:
-
-```json
-{
-  "partition": 0,
-  "offset": 0,
-  "status": "OK"
-}
-```
-
-**3. Fetch messages**
-
-```json
-{
-  "command": "FETCH",
-  "topic": "orders",
-  "partition": 0,
-  "offset": 0,
-  "limit": 10
-}
-```
-
-**4. Create a consumer group**
-
-```json
-{
-  "command": "CREATE_GROUP",
-  "groupId": "payment-service"
-}
-```
-
-**5. Subscribe a group to a topic**
-
-```json
-{
-  "command": "SUBSCRIBE",
-  "groupId": "payment-service",
-  "topic": "orders"
-}
-```
-
-**6. Join a consumer group**
-
-```json
-{
-  "command": "JOIN_GROUP",
-  "groupId": "payment-service",
-  "consumerId": "consumer-1"
-}
-```
-
-**7. Retrieve partition assignments**
-
-```json
-{
-  "command": "GET_ASSIGNMENTS",
-  "groupId": "payment-service",
-  "consumerId": "consumer-1",
-  "topic": "orders"
-}
-```
-
-**8. Fetch using a consumer group**
-
-```json
-{
-  "command": "FETCH_GROUP",
-  "groupId": "payment-service",
-  "consumerId": "consumer-1",
-  "topic": "orders",
-  "partition": 0,
-  "limit": 10
-}
-```
-
-**9. Commit a consumer group offset**
-
-```json
-{
-  "command": "COMMIT_OFFSET",
-  "groupId": "payment-service",
-  "topic": "orders",
-  "partition": 0,
-  "offset": 5
-}
-```
-
-**10. Leave a consumer group**
-
-```json
-{
-  "command": "LEAVE_GROUP",
-  "groupId": "payment-service",
-  "consumerId": "consumer-1"
-}
-```
-
-## **Multi-Broker Communication**
-
-BLACKBOX supports running multiple independent broker instances using a shared cluster configuration.
-
-### **Cluster Configuration**
-
-Broker addresses and ports are defined in:
-
-```text
-src/main/resources/config/cluster.properties
-```
-
-Example configuration:
+All brokers share `src/main/resources/config/cluster.properties`:
 
 ```properties
 cluster.name=blackbox-local
@@ -579,18 +325,7 @@ broker-3.port=9094
 broker-3.internal-port=19094
 ```
 
-`ClusterConfig` loads the configuration and validates broker addresses and port values.
-
-### **Client and Internal Ports**
-
-Each broker uses two separate ports:
-
-| Port type | Purpose |
-|---|---|
-| Client-facing port | Receives producer and consumer requests |
-| Internal port | Handles broker-to-broker communication |
-
-For example:
+`ClusterConfig` loads this file and validates addresses and ports.
 
 | Broker | Client port | Internal port |
 |---|---:|---:|
@@ -598,77 +333,307 @@ For example:
 | Broker 2 | 9093 | 19093 |
 | Broker 3 | 9094 | 19094 |
 
-Separating these ports keeps client-facing communication independent from internal broker communication.
+Separating the two ports keeps client traffic isolated from cluster traffic. Later, the internal port can be firewalled, secured or rate-limited independently.
 
-### **Inter-Broker Handshake**
+#### Handshake
 
-When two brokers connect, the initiating broker sends a handshake containing its broker ID and cluster name.
-
-Example:
-
-```text
-HANDSHAKE|broker-1|blackbox-local
+```mermaid
+sequenceDiagram
+    participant A as Broker 1 (InterBrokerClient)
+    participant B as Broker 2 (InterBrokerServer)
+    A->>B: HANDSHAKE|broker-1|blackbox-local
+    Note over B: Validate format,<br/>cluster name, and<br/>that remote ID ≠ own ID
+    B-->>A: HANDSHAKE_OK|broker-2|blackbox-local
+    loop Connection stays open
+        A->>B: PING
+        B-->>A: PONG|broker-2
+    end
 ```
 
-The receiving broker validates:
+The receiving broker rejects malformed handshakes, **self-connections** and **cross-cluster** connections.
 
-- The cluster name matches.
-- The remote broker ID is not its own ID.
-- The handshake follows the expected protocol format.
+#### Startup retries
 
-A successful handshake returns:
+If a peer isn't up yet, `InterBrokerClient` retries so brokers can start in any order:
 
-```text
-HANDSHAKE_OK|broker-2|blackbox-local
+| Setting | Value |
+|---|---|
+| Maximum attempts | 15 |
+| Retry delay | 2 seconds |
+| TCP connect timeout | 3 seconds |
+
+#### Persistent connections
+
+After the handshake the TCP connection stays open. The server keeps reading requests from it (currently only `PING`), and `InterBrokerClient` stores and reuses established peer connections instead of reconnecting for every message. This is the transport that replication and metadata sync will be built on.
+
+---
+
+## TCP API reference
+
+Clients connect to the broker's **client port** and send **one JSON object per line** (newline-delimited). Each request gets a JSON response; invalid requests receive a structured error response.
+
+| Command | Description |
+|---|---|
+| `CREATE_TOPIC` | Creates a topic with a given partition count |
+| `PUBLISH` | Publishes a message to a topic |
+| `FETCH` | Reads from a specific partition at a specific offset |
+| `FETCH_GROUP` | Reads from the group's committed offset after validating membership, subscription and partition ownership |
+| `COMMIT_OFFSET` | Commits the next offset for a group |
+| `CREATE_GROUP` | Creates a consumer group |
+| `JOIN_GROUP` | Adds a consumer to a group and triggers rebalancing |
+| `LEAVE_GROUP` | Removes a consumer and triggers rebalancing |
+| `SUBSCRIBE` | Subscribes a group to a topic and triggers rebalancing |
+| `GET_ASSIGNMENTS` | Returns a consumer's partitions for a topic |
+
+### Requests
+
+**Create a topic**
+```json
+{ "command": "CREATE_TOPIC", "topic": "orders", "partitions": 3 }
 ```
 
-Invalid handshakes, self-connections, and cluster mismatches are rejected.
-
-### **Connection Retries**
-
-If a peer broker is unavailable during startup, `InterBrokerClient` retries the connection.
-
-The current configuration uses:
-
-- Maximum attempts: 15
-- Retry delay: 2 seconds
-- TCP connection timeout: 3 seconds
-
-This allows brokers to start at different times without immediately abandoning peer discovery.
-
-### **Persistent Connections and PING/PONG**
-
-After a successful handshake, the TCP connection remains open.
-
-The server continuously reads requests from the same connection and currently supports the `PING` command.
-
-Example request:
-
-```text
-PING
+**Publish a message**
+```json
+{ "command": "PUBLISH", "topic": "orders", "key": "user-101", "value": "New order created" }
+```
+Response:
+```json
+{ "partition": 0, "offset": 0, "status": "OK" }
 ```
 
-Example response:
-
-```text
-PONG|broker-2
+**Fetch from a partition**
+```json
+{ "command": "FETCH", "topic": "orders", "partition": 0, "offset": 0, "limit": 10 }
 ```
 
-The client validates the response and confirms successful communication with the peer.
+**Create a consumer group**
+```json
+{ "command": "CREATE_GROUP", "groupId": "payment-service" }
+```
 
-Established peer connections are stored and reused by `InterBrokerClient`.
+**Subscribe a group to a topic**
+```json
+{ "command": "SUBSCRIBE", "groupId": "payment-service", "topic": "orders" }
+```
 
-**Current limitations:**
+**Join a group**
+```json
+{ "command": "JOIN_GROUP", "groupId": "payment-service", "consumerId": "consumer-1" }
+```
 
-- Automatic reconnection after an established connection breaks is not implemented.
-- Broker metadata exchange is not implemented.
-- Topic and partition metadata are not synchronized between brokers.
-- Messages are not replicated between broker instances.
-- Leader election and failover are not implemented.
+**Get partition assignments**
+```json
+{ "command": "GET_ASSIGNMENTS", "groupId": "payment-service", "consumerId": "consumer-1", "topic": "orders" }
+```
 
-The current multi-broker implementation establishes the networking foundation for future distributed messaging functionality.
+**Fetch as a group member** (starts from the committed offset)
+```json
+{ "command": "FETCH_GROUP", "groupId": "payment-service", "consumerId": "consumer-1", "topic": "orders", "partition": 0, "limit": 10 }
+```
 
-## **Technology Stack**
+**Commit an offset** (the *next* offset to read)
+```json
+{ "command": "COMMIT_OFFSET", "groupId": "payment-service", "topic": "orders", "partition": 0, "offset": 5 }
+```
+
+**Leave a group**
+```json
+{ "command": "LEAVE_GROUP", "groupId": "payment-service", "consumerId": "consumer-1" }
+```
+
+---
+
+## Quick start
+
+### Prerequisites
+
+- JDK 25
+- Git
+- Gradle Wrapper (included)
+- IntelliJ IDEA (recommended)
+
+### Clone and build
+
+```bash
+git clone <repository-url>
+cd Blackbox
+```
+
+```powershell
+# Windows
+.\gradlew.bat build
+```
+```bash
+# Linux / macOS
+./gradlew build
+```
+
+### Run a single broker
+
+Run `org.blackbox.Main` from IntelliJ. With no arguments it uses the default broker ID, client port (`9092`), data directory and offsets directory. The cluster configuration must contain the matching broker entry.
+
+### Run multiple brokers
+
+Each broker is a separate Java process. Arguments:
+
+```text
+<broker-id> <client-port> <data-directory> <offset-directory>
+```
+
+| Broker | Program arguments |
+|---|---|
+| Broker 1 | `broker-1 9092 data/broker-1 offsets/broker-1` |
+| Broker 2 | `broker-2 9093 data/broker-2 offsets/broker-2` |
+| Broker 3 | `broker-3 9094 data/broker-3 offsets/broker-3` |
+
+Start them in any order. Each loads the shared cluster config and connects to its peers, retrying until they are available.
+
+### Send your first request
+
+Linux/macOS (`nc`):
+```bash
+echo '{"command":"CREATE_TOPIC","topic":"orders","partitions":3}' | nc localhost 9092
+```
+
+Windows (PowerShell):
+```powershell
+$c = New-Object System.Net.Sockets.TcpClient("localhost", 9092)
+$s = $c.GetStream()
+$w = New-Object System.IO.StreamWriter($s); $w.AutoFlush = $true
+$r = New-Object System.IO.StreamReader($s)
+$w.WriteLine('{"command":"CREATE_TOPIC","topic":"orders","partitions":3}')
+$r.ReadLine()
+$c.Close()
+```
+
+---
+
+## End-to-end walkthrough
+
+A realistic session showing topics, groups, rebalancing and offsets. Send each line to `localhost:9092`.
+
+```text
+1. CREATE_TOPIC      orders, 3 partitions
+2. PUBLISH ×6        → lands on partitions 0,1,2,0,1,2
+3. CREATE_GROUP      payment-service
+4. SUBSCRIBE         payment-service → orders
+5. JOIN_GROUP        consumer-1
+6. GET_ASSIGNMENTS   consumer-1       → [0, 1, 2]   (sole member owns everything)
+7. JOIN_GROUP        consumer-2       → rebalance
+8. GET_ASSIGNMENTS   consumer-1       → [0, 2]
+   GET_ASSIGNMENTS   consumer-2       → [1]
+9. FETCH_GROUP       consumer-1, partition 0   → messages from committed offset
+10. FETCH_GROUP      consumer-1, partition 1   → ERROR: not assigned
+11. COMMIT_OFFSET    partition 0, offset 2     → progress saved to offsets/payment-service.json
+12. LEAVE_GROUP      consumer-2       → rebalance, consumer-1 owns [0, 1, 2] again
+```
+
+Steps 6–8 and 12 demonstrate automatic rebalancing; step 10 demonstrates ownership enforcement; step 11 demonstrates persistence.
+
+---
+
+## Runtime storage layout
+
+Directories are created automatically and excluded from version control via `.gitignore`.
+
+**Single broker**
+```text
+Blackbox/
+├── data/
+│   └── <topic>/partition-<n>.log
+└── offsets/
+    └── <group-id>.json
+```
+
+**Multiple brokers**
+```text
+Blackbox/
+├── data/
+│   ├── broker-1/
+│   ├── broker-2/
+│   └── broker-3/
+└── offsets/
+    ├── broker-1/
+    ├── broker-2/
+    └── broker-3/
+```
+
+- `data/` holds partition logs. `offsets/` holds consumer group progress.
+- Deleting these directories resets the broker's local data and consumer progress.
+
+---
+
+## Design decisions
+
+| Decision | Reasoning / trade-off |
+|---|---|
+| **Append-only logs** | Fast sequential writes, trivial offsets, simple recovery. Cost: space is only reclaimed by future segmentation/retention work. |
+| **One log file per partition** | Partitions stay fully independent, which makes parallel consumption and later per-partition replication natural. Cost: many partitions means many files. |
+| **Offset = next message to read** | Matches Kafka semantics; "committed 4" means "resume at 4", with no off-by-one ambiguity after a restart. |
+| **Explicit offset commits** | The consumer decides when work is done, giving at-least-once delivery. Cost: duplicates are possible after a crash. |
+| **Round-robin producer** | Even load across partitions with almost no logic. Cost: no ordering guarantee per key. Key-based partitioning would fix this. |
+| **Group state in memory, offsets on disk** | Offsets are the only state that must survive a restart to avoid reprocessing. Membership is cheap to rebuild. Cost: clients must re-register after a restart. |
+| **JSON over newline-delimited TCP** | Easy to debug by hand with `nc` or PowerShell. Cost: larger and slower than a binary protocol. |
+| **Thread per client connection** | Simple and easy to reason about. Cost: does not scale to very large connection counts compared with an NIO selector loop. |
+| **Separate client and internal ports** | Isolates cluster traffic from client traffic so each can be secured or limited independently. |
+| **Handshake with cluster name and ID** | Prevents brokers from different clusters (or a broker connecting to itself) from forming bogus links. |
+
+---
+
+## Current limitations
+
+These are known gaps, not bugs:
+
+- **No replication.** Each broker stores only what is published to it. Losing a broker's data directory loses that data.
+- **No metadata sync.** Topics created on one broker are not visible on others.
+- **No leader election or failover.**
+- **No automatic reconnection** after an established inter-broker connection breaks. Startup retries only apply to initial connection.
+- **No consumer heartbeats.** Crashed consumers are not detected; they must send `LEAVE_GROUP`.
+- **Group membership and assignments are in memory** and lost on restart (offsets are not).
+- **Round-robin only:** `key` is stored with the message but not used for partition selection.
+- **No log segmentation, indexing or retention**, so each partition is a single growing file.
+- **No authentication or encryption** on either port.
+
+---
+
+## Implementation status and roadmap
+
+### Implemented
+
+| Feature | Status |
+|---|---|
+| Immutable message model | Implemented |
+| Binary append-only partition logs and sequential offsets | Implemented |
+| Topic creation, multiple partitions, recovery on startup | Implemented |
+| Producer with round-robin routing | Implemented |
+| Offset-based consumer fetching | Implemented |
+| Persistent consumer group offsets and commit validation | Implemented |
+| TCP server and JSON protocol | Implemented |
+| Consumer group creation, registration, removal, subscriptions | Implemented |
+| Round-robin assignment and automatic rebalancing | Implemented |
+| Assignment-aware group fetching | Implemented |
+| TCP integration for consumer coordination | Implemented |
+| Multiple independent broker instances and shared cluster config | Implemented |
+| Inter-broker handshake and validation | Implemented |
+| Startup connection retries | Implemented |
+| Persistent inter-broker connections and PING/PONG | Implemented |
+
+### Planned
+
+| Phase | Feature |
+|---|---|
+| **Reliability** | Consumer heartbeats and failure detection; automatic inter-broker reconnection |
+| **Storage** | Log segmentation and indexing; retention policies |
+| **Distribution** | Broker metadata exchange; topic/partition metadata sync |
+| **Replication** | Leader-follower architecture; message replication; replication consistency |
+| **Fault tolerance** | Leader election and failover |
+| **Beyond the broker** | Stream processing |
+
+The long-term goal is a lightweight, reliable, distributed event-streaming system, built in a way that makes the engineering trade-offs behind each component visible.
+
+---
+
+## Technology stack
 
 | Technology | Purpose |
 |---|---|
@@ -676,165 +641,8 @@ The current multi-broker implementation establishes the networking foundation fo
 | Gradle | Build automation and dependency management |
 | Java NIO | File-based storage |
 | `FileChannel` | Binary log persistence |
-| TCP Sockets | Client-server and inter-broker communication |
+| TCP sockets | Client-server and inter-broker communication |
 | Jackson | JSON serialization and deserialization |
 | PowerShell | TCP API testing |
 
-The project deliberately uses core Java to implement the broker's internal mechanisms instead of relying on an existing messaging framework.
-
-## **Getting Started**
-
-### **Prerequisites**
-
-- JDK 25
-- Gradle Wrapper (included in the repository)
-- Git
-- IntelliJ IDEA (recommended)
-
-### **Clone the repository**
-
-```bash
-git clone <repository-url>
-cd Blackbox
-```
-
-### **Build the project**
-
-On Windows:
-
-```powershell
-.\gradlew.bat build
-```
-
-On Linux/macOS:
-
-```bash
-./gradlew build
-```
-
-### **Run a single broker**
-
-Open the project in IntelliJ IDEA and run:
-
-```text
-org.blackbox.Main
-```
-
-Without startup arguments, the application uses the default broker ID, client port, data directory, and offset directory.
-
-The default client-facing TCP server starts on port `9092`, provided the cluster configuration contains the corresponding broker entry.
-
-### **Run Multiple Brokers**
-
-BLACKBOX supports running multiple broker instances as separate Java processes.
-
-Each instance accepts the following command-line arguments:
-
-```text
-<broker-id> <client-port> <data-directory> <offset-directory>
-```
-
-Example IntelliJ run configurations:
-
-**Broker 1**
-
-```text
-broker-1 9092 data/broker-1 offsets/broker-1
-```
-
-**Broker 2**
-
-```text
-broker-2 9093 data/broker-2 offsets/broker-2
-```
-
-**Broker 3**
-
-```text
-broker-3 9094 data/broker-3 offsets/broker-3
-```
-
-Start the broker instances independently. Each broker loads the shared cluster configuration and attempts to establish connections with the other configured brokers.
-
-Each instance maintains its own data and offset directories.
-
-## **Runtime Storage**
-
-BLACKBOX creates its runtime directories automatically.
-
-Single-broker example:
-
-```text
-Blackbox/
-├── data/
-│   └── <topic>/
-│       └── partition-<number>.log
-│
-└── offsets/
-    └── <group-id>.json
-```
-
-Multi-broker example:
-
-```text
-Blackbox/
-├── data/
-│   ├── broker-1/
-│   ├── broker-2/
-│   └── broker-3/
-│
-└── offsets/
-    ├── broker-1/
-    ├── broker-2/
-    └── broker-3/
-```
-
-- `data/` stores persistent partition logs.
-- `offsets/` stores consumer group progress.
-- Each broker uses its own configured directories.
-
-These directories are runtime-generated and excluded from version control through `.gitignore`.
-
-Deleting these directories resets the corresponding local broker data and consumer progress.
-
-## **Current Implementation Status**
-
-| Feature | Status |
-|---|---|
-| Immutable message model | Implemented |
-| Binary append-only partition logs | Implemented |
-| Sequential partition offsets | Implemented |
-| Topic creation | Implemented |
-| Multiple partitions per topic | Implemented |
-| Producer with round-robin routing | Implemented |
-| Offset-based consumer fetching | Implemented |
-| Topic recovery on startup | Implemented |
-| Persistent consumer group offsets | Implemented |
-| Group-aware message fetching | Implemented |
-| Offset commit validation | Implemented |
-| TCP server and JSON protocol | Implemented |
-| Consumer group creation and management | Implemented |
-| Consumer registration and removal | Implemented |
-| Topic subscriptions | Implemented |
-| Round-robin partition assignment | Implemented |
-| Automatic rebalancing on membership changes | Implemented |
-| Assignment-aware group fetching | Implemented |
-| TCP integration for consumer coordination | Implemented |
-| Multiple independent broker instances | Implemented |
-| Shared cluster configuration | Implemented |
-| Inter-broker handshake and validation | Implemented |
-| Startup connection retries | Implemented |
-| Persistent inter-broker TCP connections | Implemented |
-| PING/PONG communication | Implemented |
-| Consumer heartbeats and failure detection | Planned |
-| Automatic reconnection after disconnection | Planned |
-| Broker metadata exchange | Planned |
-| Log segmentation and indexing | Planned |
-| Message replication | Planned |
-| Leader-follower architecture | Planned |
-| Replication consistency | Planned |
-| Leader election and failover | Planned |
-| Stream processing | Planned |
-
-
-The long-term objective is to build a lightweight, reliable, and distributed event streaming system while understanding the engineering trade-offs behind each component.
+The broker's internals are implemented with core Java rather than an existing messaging framework.
